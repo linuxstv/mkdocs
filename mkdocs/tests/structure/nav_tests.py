@@ -1,17 +1,15 @@
 #!/usr/bin/env python
-# coding: utf-8
 
-from __future__ import unicode_literals
 import sys
 import unittest
 
-from mkdocs.structure.nav import get_navigation
+from mkdocs.structure.nav import get_navigation, _get_by_type, Section
 from mkdocs.structure.files import File, Files
 from mkdocs.structure.pages import Page
-from mkdocs.tests.base import dedent, load_config, LogTestCase
+from mkdocs.tests.base import dedent, load_config
 
 
-class SiteNavigationTests(LogTestCase):
+class SiteNavigationTests(unittest.TestCase):
 
     maxDiff = None
 
@@ -53,6 +51,7 @@ class SiteNavigationTests(LogTestCase):
         self.assertEqual(str(site_navigation).strip(), expected)
         self.assertEqual(len(site_navigation.items), 2)
         self.assertEqual(len(site_navigation.pages), 2)
+        self.assertEqual(repr(site_navigation.homepage), "Page(title='Home', url='/index.html')")
 
     def test_nav_missing_page(self):
         nav_cfg = [
@@ -379,3 +378,18 @@ class SiteNavigationTests(LogTestCase):
         self.assertFalse(site_navigation.items[1].children[3].children[0].active)
         self.assertFalse(site_navigation.items[1].children[3].active)
         self.assertFalse(site_navigation.items[1].active)
+
+    def test_get_by_type_nested_sections(self):
+        nav_cfg = [
+            {'Section 1': [
+                {'Section 2': [
+                    {'Page': 'page.md'}
+                ]}
+            ]}
+        ]
+        cfg = load_config(nav=nav_cfg, site_url='http://example.com/')
+        files = Files([
+            File('page.md', cfg['docs_dir'], cfg['site_dir'], cfg['use_directory_urls'])
+        ])
+        site_navigation = get_navigation(files, cfg)
+        self.assertEqual(len(_get_by_type(site_navigation, Section)), 2)

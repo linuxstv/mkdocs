@@ -1,11 +1,7 @@
-# coding: utf-8
-
-from __future__ import unicode_literals
-
 import os
-import io
-import datetime
 import logging
+from urllib.parse import urlsplit, urlunsplit, urljoin
+from urllib.parse import unquote as urlunquote
 
 import markdown
 from markdown.extensions import Extension
@@ -13,13 +9,12 @@ from markdown.treeprocessors import Treeprocessor
 from markdown.util import AMP_SUBSTITUTE
 
 from mkdocs.structure.toc import get_toc
-from mkdocs.utils import meta, urlparse, urlunparse, urljoin, urlunquote, get_markdown_title, warning_filter
+from mkdocs.utils import meta, get_build_date, get_markdown_title
 
 log = logging.getLogger(__name__)
-log.addFilter(warning_filter)
 
 
-class Page(object):
+class Page:
     def __init__(self, title, file, config):
         file.page = self
         self.file = file
@@ -36,14 +31,7 @@ class Page(object):
         self.is_page = True
         self.is_link = False
 
-        # Support SOURCE_DATE_EPOCH environment variable for "reproducible" builds.
-        # See https://reproducible-builds.org/specs/source-date-epoch/
-        if 'SOURCE_DATE_EPOCH' in os.environ:
-            self.update_date = datetime.datetime.utcfromtimestamp(
-                int(os.environ['SOURCE_DATE_EPOCH'])
-            ).strftime("%Y-%m-%d")
-        else:
-            self.update_date = datetime.datetime.now().strftime("%Y-%m-%d")
+        self.update_date = get_build_date()
 
         self._set_canonical_url(config.get('site_url', None))
         self._set_edit_url(config.get('repo_url', None), config.get('edit_uri', None))
@@ -55,18 +43,16 @@ class Page(object):
         self.meta = {}
 
     def __eq__(self, other):
-
-        def sub_dict(d):
-            return dict((key, value) for key, value in d.items() if key in ['title', 'file'])
-
-        return (isinstance(other, self.__class__) and sub_dict(self.__dict__) == sub_dict(other.__dict__))
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
+        return (
+            isinstance(other, self.__class__) and
+            self.title == other.title and
+            self.file == other.file
+        )
 
     def __repr__(self):
-        title = "'{}'".format(self.title) if (self.title is not None) else '[blank]'
-        return "Page(title={}, url='{}')".format(title, self.abs_url or self.file.url)
+        title = f"'{self.title}'" if (self.title is not None) else '[blank]'
+        url = self.abs_url or self.file.url
+        return f"Page(title={title}, url='{url}')"
 
     def _indent_print(self, depth=0):
         return '{}{}'.format('    ' * depth, repr(self))
@@ -93,7 +79,7 @@ class Page(object):
 
     @property
     def is_homepage(self):
-        return self.is_top_level and self.is_index
+        return self.is_top_level and self.is_index and self.file.url in ['.', 'index.html']
 
     @property
     def url(self):
@@ -110,7 +96,7 @@ class Page(object):
             if not base.endswith('/'):
                 base += '/'
             self.canonical_url = urljoin(base, self.url)
-            self.abs_url = urlparse(self.canonical_url).path
+            self.abs_url = urlsplit(self.canonical_url).path
         else:
             self.canonical_url = None
             self.abs_url = None
@@ -118,6 +104,9 @@ class Page(object):
     def _set_edit_url(self, repo_url, edit_uri):
         if repo_url and edit_uri:
             src_path = self.file.src_path.replace('\\', '/')
+            # Ensure urljoin behavior is correct
+            if not edit_uri.startswith(('?', '#')) and not repo_url.endswith('/'):
+                repo_url += '/'
             self.edit_url = urljoin(repo_url, edit_uri + src_path)
         else:
             self.edit_url = None
@@ -128,13 +117,13 @@ class Page(object):
         )
         if source is None:
             try:
-                with io.open(self.file.abs_src_path, 'r', encoding='utf-8-sig', errors='strict') as f:
+                with open(self.file.abs_src_path, encoding='utf-8-sig', errors='strict') as f:
                     source = f.read()
-            except IOError:
-                log.error('File not found: {}'.format(self.file.src_path))
+            except OSError:
+                log.error(f'File not found: {self.file.src_path}')
                 raise
             except ValueError:
-                log.error('Encoding error reading file: {}'.format(self.file.src_path))
+                log.error(f'Encoding error reading file: {self.file.src_path}')
                 raise
 
         self.markdown, self.meta = meta.get_data(source)
@@ -184,7 +173,7 @@ class Page(object):
             extension_configs=config['mdx_configs'] or {}
         )
         self.content = md.convert(self.markdown)
-        self.toc = get_toc(getattr(md, 'toc', ''))
+        self.toc = get_toc(getattr(md, 'toc_tokens', []))
 
 
 class _RelativePathTreeprocessor(Treeprocessor):
@@ -214,9 +203,9 @@ class _RelativePathTreeprocessor(Treeprocessor):
         return root
 
     def path_to_url(self, url):
-        scheme, netloc, path, params, query, fragment = urlparse(url)
+        scheme, netloc, path, query, fragment = urlsplit(url)
 
-        if (scheme or netloc or not path or url.startswith('/')
+        if (scheme or netloc or not path or url.startswith('/') or url.startswith('\\')
                 or AMP_SUBSTITUTE in url or '.' not in os.path.split(path)[-1]):
             # Ignore URLs unless they are a relative link to a source file.
             # AMP_SUBSTITUTE is used internally by Markdown only for email.
@@ -230,14 +219,14 @@ class _RelativePathTreeprocessor(Treeprocessor):
         # Validate that the target exists in files collection.
         if target_path not in self.files:
             log.warning(
-                "Documentation file '{}' contains a link to '{}' which is not found "
-                "in the documentation files.".format(self.file.src_path, target_path)
+                f"Documentation file '{self.file.src_path}' contains a link to "
+                f"'{target_path}' which is not found in the documentation files."
             )
             return url
         target_file = self.files.get_file_from_path(target_path)
         path = target_file.url_relative_to(self.file)
-        components = (scheme, netloc, path, params, query, fragment)
-        return urlunparse(components)
+        components = (scheme, netloc, path, query, fragment)
+        return urlunsplit(components)
 
 
 class _RelativePathExtension(Extension):
@@ -250,6 +239,6 @@ class _RelativePathExtension(Extension):
         self.file = file
         self.files = files
 
-    def extendMarkdown(self, md, md_globals):
+    def extendMarkdown(self, md):
         relpath = _RelativePathTreeprocessor(self.file, self.files)
-        md.treeprocessors.add("relpath", relpath, "_end")
+        md.treeprocessors.register(relpath, "relpath", 0)

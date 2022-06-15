@@ -1,14 +1,11 @@
-# coding: utf-8
-
 """
 Implements the plugin API for MkDocs.
 
 """
 
-from __future__ import unicode_literals
 
-import pkg_resources
 import logging
+import importlib_metadata
 from collections import OrderedDict
 
 from mkdocs.config.base import Config
@@ -20,19 +17,27 @@ log = logging.getLogger('mkdocs.plugins')
 EVENTS = (
     'config', 'pre_build', 'files', 'nav', 'env', 'pre_template', 'template_context',
     'post_template', 'pre_page', 'page_read_source', 'page_markdown',
-    'page_content', 'page_context', 'post_page', 'post_build', 'serve'
+    'page_content', 'page_context', 'post_page', 'post_build', 'serve', 'build_error'
 )
 
 
 def get_plugins():
-    """ Return a dict of all installed Plugins by name. """
+    """ Return a dict of all installed Plugins as {name: EntryPoint}. """
 
-    plugins = pkg_resources.iter_entry_points(group='mkdocs.plugins')
+    plugins = importlib_metadata.entry_points(group='mkdocs.plugins')
 
-    return dict((plugin.name, plugin) for plugin in plugins)
+    # Allow third-party plugins to override core plugins
+    pluginmap = {}
+    for plugin in plugins:
+        if plugin.name in pluginmap and plugin.value.startswith("mkdocs.contrib."):
+            continue
+
+        pluginmap[plugin.name] = plugin
+
+    return pluginmap
 
 
-class BasePlugin(object):
+class BasePlugin:
     """
     Plugin base class.
 
@@ -61,7 +66,7 @@ class PluginCollection(OrderedDict):
     """
 
     def __init__(self, *args, **kwargs):
-        super(PluginCollection, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.events = {x: [] for x in EVENTS}
 
     def _register_event(self, event_name, method):
@@ -71,10 +76,10 @@ class PluginCollection(OrderedDict):
     def __setitem__(self, key, value, **kwargs):
         if not isinstance(value, BasePlugin):
             raise TypeError(
-                '{0}.{1} only accepts values which are instances of {3}.{4} '
-                'sublcasses'.format(self.__module__, self.__name__,
-                                    BasePlugin.__module__, BasePlugin.__name__))
-        super(PluginCollection, self).__setitem__(key, value, **kwargs)
+                f'{self.__module__}.{self.__name__} only accepts values which'
+                f' are instances of {BasePlugin.__module__}.{BasePlugin.__name__}'
+                ' subclasses')
+        super().__setitem__(key, value, **kwargs)
         # Register all of the event methods defined for this Plugin.
         for event_name in (x for x in dir(value) if x.startswith('on_')):
             method = getattr(value, event_name)

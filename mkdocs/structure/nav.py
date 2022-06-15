@@ -1,16 +1,13 @@
-# coding: utf-8
-
-from __future__ import unicode_literals
 import logging
+from urllib.parse import urlsplit
 
 from mkdocs.structure.pages import Page
-from mkdocs.utils import string_types, nest_paths, urlparse, warning_filter
+from mkdocs.utils import nest_paths
 
 log = logging.getLogger(__name__)
-log.addFilter(warning_filter)
 
 
-class Navigation(object):
+class Navigation:
     def __init__(self, items, pages):
         self.items = items  # Nested List with full navigation of Sections, Pages, and Links.
         self.pages = pages  # Flat List of subset of Pages in nav, in order.
@@ -31,7 +28,7 @@ class Navigation(object):
         return len(self.items)
 
 
-class Section(object):
+class Section:
     def __init__(self, title, children):
         self.title = title
         self.children = children
@@ -44,7 +41,7 @@ class Section(object):
         self.is_link = False
 
     def __repr__(self):
-        return "Section(title='{0}')".format(self.title)
+        return f"Section(title='{self.title}')"
 
     def _get_active(self):
         """ Return active status of section. """
@@ -71,7 +68,7 @@ class Section(object):
         return '\n'.join(ret)
 
 
-class Link(object):
+class Link:
     def __init__(self, title, url):
         self.title = title
         self.url = url
@@ -85,8 +82,8 @@ class Link(object):
         self.is_link = True
 
     def __repr__(self):
-        title = "'{}'".format(self.title) if (self.title is not None) else '[blank]'
-        return "Link(title={}, url='{}')".format(title, self.url)
+        title = f"'{self.title}'" if (self.title is not None) else '[blank]'
+        return f"Link(title={title}, url='{self.url}')"
 
     @property
     def ancestors(self):
@@ -119,28 +116,28 @@ def get_navigation(files, config):
             'included in the "nav" configuration:\n  - {}'.format(
                 '\n  - '.join([file.src_path for file in missing_from_config]))
         )
-        # Any documentation files not found in the nav should still have an associated page.
-        # However, these page objects are only accessable from File instances as `file.page`.
+        # Any documentation files not found in the nav should still have an associated page, so we
+        # create them here. The Page object will automatically be assigned to `file.page` during
+        # its creation (and this is the only way in which these page objects are accessible).
         for file in missing_from_config:
             Page(None, file, config)
 
     links = _get_by_type(items, Link)
     for link in links:
-        scheme, netloc, path, params, query, fragment = urlparse(link.url)
+        scheme, netloc, path, query, fragment = urlsplit(link.url)
         if scheme or netloc:
             log.debug(
-                "An external link to '{}' is included in "
-                "the 'nav' configuration.".format(link.url)
+                f"An external link to '{link.url}' is included in the 'nav' configuration."
             )
         elif link.url.startswith('/'):
             log.debug(
-                "An absolute path to '{}' is included in the 'nav' configuration, "
-                "which presumably points to an external resource.".format(link.url)
+                f"An absolute path to '{link.url}' is included in the 'nav' "
+                "configuration, which presumably points to an external resource."
             )
         else:
             msg = (
-                "A relative path to '{}' is included in the 'nav' configuration, "
-                "which is not found in the documentation files".format(link.url)
+                f"A relative path to '{link.url}' is included in the 'nav' "
+                "configuration, which is not found in the documentation files"
             )
             log.warning(msg)
     return Navigation(items, pages)
@@ -150,7 +147,7 @@ def _data_to_navigation(data, files, config):
     if isinstance(data, dict):
         return [
             _data_to_navigation((key, value), files, config)
-            if isinstance(value, string_types) else
+            if isinstance(value, str) else
             Section(title=key, children=_data_to_navigation(value, files, config))
             for key, value in data.items()
         ]
@@ -173,7 +170,7 @@ def _get_by_type(nav, T):
     for item in nav:
         if isinstance(item, T):
             ret.append(item)
-        elif item.children:
+        if item.children:
             ret.extend(_get_by_type(item.children, T))
     return ret
 

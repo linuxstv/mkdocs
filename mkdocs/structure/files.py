@@ -1,23 +1,18 @@
-# coding: utf-8
-
-from __future__ import unicode_literals
 import fnmatch
 import os
 import logging
-from functools import cmp_to_key
+from urllib.parse import quote as urlquote
 
 from mkdocs import utils
 
 
 log = logging.getLogger(__name__)
-log.addFilter(utils.warning_filter)
 
 
-class Files(object):
+class Files:
     """ A collection of File objects. """
     def __init__(self, files):
         self._files = files
-        self.src_paths = {file.src_path: file for file in files}
 
     def __iter__(self):
         return iter(self._files)
@@ -28,6 +23,10 @@ class Files(object):
     def __contains__(self, path):
         return path in self.src_paths
 
+    @property
+    def src_paths(self):
+        return {file.src_path: file for file in self._files}
+
     def get_file_from_path(self, path):
         """ Return a File instance with File.src_path equal to path. """
         return self.src_paths.get(os.path.normpath(path))
@@ -35,7 +34,10 @@ class Files(object):
     def append(self, file):
         """ Append file to Files collection. """
         self._files.append(file)
-        self.src_paths[file.src_path] = file
+
+    def remove(self, file):
+        """ Remove file from Files collection. """
+        self._files.remove(file)
 
     def copy_static_files(self, dirty=False):
         """ Copy static files from source to destination. """
@@ -66,8 +68,11 @@ class Files(object):
     def add_files_from_theme(self, env, config):
         """ Retrieve static files from Jinja environment and add to collection. """
         def filter(name):
-            patterns = ['.*', '*.py', '*.pyc', '*.html', '*readme*', 'mkdocs_theme.yml']
-            patterns.extend('*{0}'.format(x) for x in utils.markdown_extensions)
+            # '.*' filters dot files/dirs at root level whereas '*/.*' filters nested levels
+            patterns = ['.*', '*/.*', '*.py', '*.pyc', '*.html', '*readme*', 'mkdocs_theme.yml']
+            # Exclude translation files
+            patterns.append("locales/*")
+            patterns.extend(f'*{x}' for x in utils.markdown_extensions)
             patterns.extend(config['theme'].static_templates)
             for pattern in patterns:
                 if fnmatch.fnmatch(name.lower(), pattern):
@@ -75,6 +80,7 @@ class Files(object):
             return True
         for path in env.list_templates(filter_func=filter):
             # Theme files do not override docs_dir files
+            path = os.path.normpath(path)
             if path not in self:
                 for dir in config['theme'].dirs:
                     # Find the first theme dir which contains path
@@ -83,7 +89,7 @@ class Files(object):
                         break
 
 
-class File(object):
+class File:
     """
     A MkDocs File object.
 
@@ -125,14 +131,18 @@ class File(object):
         self.url = self._get_url(use_directory_urls)
 
     def __eq__(self, other):
+        return (
+            isinstance(other, self.__class__) and
+            self.src_path == other.src_path and
+            self.abs_src_path == other.abs_src_path and
+            self.url == other.url
+        )
 
-        def sub_dict(d):
-            return dict((key, value) for key, value in d.items() if key in ['src_path', 'abs_src_path', 'url'])
-
-        return (isinstance(other, self.__class__) and sub_dict(self.__dict__) == sub_dict(other.__dict__))
-
-    def __ne__(self, other):
-        return not self.__eq__(other)
+    def __repr__(self):
+        return (
+            f"File(src_path='{self.src_path}', dest_path='{self.dest_path}',"
+            f" name='{self.name}', url='{self.url}')"
+        )
 
     def _get_stem(self):
         """ Return the name of the file without it's extension. """
@@ -143,18 +153,14 @@ class File(object):
     def _get_dest_path(self, use_directory_urls):
         """ Return destination path based on source path. """
         if self.is_documentation_page():
-            if use_directory_urls:
-                parent, filename = os.path.split(self.src_path)
-                if self.name == 'index':
-                    # index.md or README.md => index.html
-                    return os.path.join(parent, 'index.html')
-                else:
-                    # foo.md => foo/index.html
-                    return os.path.join(parent, self.name, 'index.html')
-            else:
+            parent, filename = os.path.split(self.src_path)
+            if not use_directory_urls or self.name == 'index':
+                # index.md or README.md => index.html
                 # foo.md => foo.html
-                root, ext = os.path.splitext(self.src_path)
-                return root + '.html'
+                return os.path.join(parent, self.name + '.html')
+            else:
+                # foo.md => foo/index.html
+                return os.path.join(parent, self.name, 'index.html')
         return self.src_path
 
     def _get_url(self, use_directory_urls):
@@ -166,7 +172,7 @@ class File(object):
                 url = '.'
             else:
                 url = dirname + '/'
-        return utils.urlquote(url)
+        return urlquote(url)
 
     def url_relative_to(self, other):
         """ Return url for file relative to other file. """
@@ -175,9 +181,9 @@ class File(object):
     def copy_file(self, dirty=False):
         """ Copy source file to destination, ensuring parent directories exist. """
         if dirty and not self.is_modified():
-            log.debug("Skip copying unmodified file: '{}'".format(self.src_path))
+            log.debug(f"Skip copying unmodified file: '{self.src_path}'")
         else:
-            log.debug("Copying media file: '{}'".format(self.src_path))
+            log.debug(f"Copying media file: '{self.src_path}'")
             utils.copy_file(self.abs_src_path, self.abs_dest_path)
 
     def is_modified(self):
@@ -238,7 +244,7 @@ def get_files(config):
                 continue
             # Skip README.md if an index file also exists in dir
             if filename.lower() == 'readme.md' and 'index.md' in filenames:
-                log.warning("Both index.md and readme.md found. Skipping readme.md from {}".format(source_dir))
+                log.warning(f"Both index.md and readme.md found. Skipping readme.md from {source_dir}")
                 continue
             files.append(File(path, config['docs_dir'], config['site_dir'], config['use_directory_urls']))
 
@@ -248,16 +254,12 @@ def get_files(config):
 def _sort_files(filenames):
     """ Always sort `index` or `README` as first filename in list. """
 
-    def compare(x, y):
-        if x == y:
-            return 0
-        if os.path.splitext(y)[0] in ['index', 'README']:
-            return 1
-        if os.path.splitext(x)[0] in ['index', 'README'] or x < y:
-            return -1
-        return 1
+    def key(f):
+        if os.path.splitext(f)[0] in ['index', 'README']:
+            return (0,)
+        return (1, f)
 
-    return sorted(filenames, key=cmp_to_key(compare))
+    return sorted(filenames, key=key)
 
 
 def _filter_paths(basename, path, is_dir, exclude):

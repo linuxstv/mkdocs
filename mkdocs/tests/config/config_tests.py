@@ -1,39 +1,26 @@
 #!/usr/bin/env python
-# coding: utf-8
 
-from __future__ import unicode_literals
 import os
 import tempfile
 import unittest
-
-try:
-    # py>=3.2
-    from tempfile import TemporaryDirectory
-except ImportError:
-    from backports.tempfile import TemporaryDirectory
-
+from tempfile import TemporaryDirectory
 
 import mkdocs
 from mkdocs import config
-from mkdocs import utils
 from mkdocs.config import config_options
+from mkdocs.config import defaults
 from mkdocs.exceptions import ConfigurationError
+from mkdocs.localization import parse_locale
 from mkdocs.tests.base import dedent
-
-
-def ensure_utf(string):
-    return string.encode('utf-8') if not utils.PY3 else string
 
 
 class ConfigTests(unittest.TestCase):
     def test_missing_config_file(self):
-
-        def load_missing_config():
+        with self.assertRaises(ConfigurationError):
             config.load_config(config_file='bad_filename.yaml')
-        self.assertRaises(ConfigurationError, load_missing_config)
 
     def test_missing_site_name(self):
-        c = config.Config(schema=config.DEFAULT_SCHEMA)
+        c = config.Config(schema=defaults.get_schema())
         c.load_dict({})
         errors, warnings = c.validate()
         self.assertEqual(len(errors), 1)
@@ -43,14 +30,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(len(warnings), 0)
 
     def test_empty_config(self):
-        def load_empty_config():
+        with self.assertRaises(ConfigurationError):
             config.load_config(config_file='/dev/null')
-        self.assertRaises(ConfigurationError, load_empty_config)
 
     def test_nonexistant_config(self):
-        def load_empty_config():
+        with self.assertRaises(ConfigurationError):
             config.load_config(config_file='/path/that/is/not/real')
-        self.assertRaises(ConfigurationError, load_empty_config)
 
     def test_invalid_config(self):
         file_contents = dedent("""
@@ -60,14 +45,12 @@ class ConfigTests(unittest.TestCase):
         """)
         config_file = tempfile.NamedTemporaryFile('w', delete=False)
         try:
-            config_file.write(ensure_utf(file_contents))
+            config_file.write(file_contents)
             config_file.flush()
             config_file.close()
 
-            self.assertRaises(
-                ConfigurationError,
-                config.load_config, config_file=open(config_file.name, 'rb')
-            )
+            with self.assertRaises(ConfigurationError):
+                config.load_config(config_file=open(config_file.name, 'rb'))
         finally:
             os.remove(config_file.name)
 
@@ -78,13 +61,13 @@ class ConfigTests(unittest.TestCase):
         """
         expected_result = {
             'site_name': 'Example',
-            'pages': [
+            'nav': [
                 {'Introduction': 'index.md'}
             ],
         }
         file_contents = dedent("""
         site_name: Example
-        pages:
+        nav:
         - 'Introduction': 'index.md'
         """)
         with TemporaryDirectory() as temp_path:
@@ -92,13 +75,13 @@ class ConfigTests(unittest.TestCase):
             config_path = os.path.join(temp_path, 'mkdocs.yml')
             config_file = open(config_path, 'w')
 
-            config_file.write(ensure_utf(file_contents))
+            config_file.write(file_contents)
             config_file.flush()
             config_file.close()
 
             result = config.load_config(config_file=config_file.name)
             self.assertEqual(result['site_name'], expected_result['site_name'])
-            self.assertEqual(result['pages'], expected_result['pages'])
+            self.assertEqual(result['nav'], expected_result['nav'])
 
     def test_theme(self):
         with TemporaryDirectory() as mytheme, TemporaryDirectory() as custom:
@@ -111,6 +94,7 @@ class ConfigTests(unittest.TestCase):
                 {  # user defined variables
                     'theme': {
                         'name': 'mkdocs',
+                        'locale': 'fr',
                         'static_templates': ['foo.html'],
                         'show_sidebar': False,
                         'some_var': 'bar'
@@ -127,25 +111,32 @@ class ConfigTests(unittest.TestCase):
                     'dirs': [os.path.join(theme_dir, 'mkdocs'), mkdocs_templates_dir],
                     'static_templates': ['404.html', 'sitemap.xml'],
                     'vars': {
+                        'locale': parse_locale('en'),
                         'include_search_page': False,
                         'search_index_only': False,
+                        'analytics': {'gtag': None},
                         'highlightjs': True,
                         'hljs_style': 'github',
                         'hljs_languages': [],
+                        'navigation_depth': 2,
+                        'nav_style': 'primary',
                         'shortcuts': {'help': 191, 'next': 78, 'previous': 80, 'search': 83}
                     }
                 }, {
                     'dirs': [os.path.join(theme_dir, 'readthedocs'), mkdocs_templates_dir],
                     'static_templates': ['404.html', 'sitemap.xml'],
                     'vars': {
+                        'locale': parse_locale('en'),
                         'include_search_page': True,
                         'search_index_only': False,
+                        'analytics': {'anonymize_ip': False, 'gtag': None},
                         'highlightjs': True,
                         'hljs_languages': [],
                         'include_homepage_in_sidebar': True,
                         'prev_next_buttons_location': 'bottom',
                         'navigation_depth': 4,
                         'sticky_navigation': True,
+                        'logo': None,
                         'titles_only': False,
                         'collapse_navigation': True
                     }
@@ -153,33 +144,39 @@ class ConfigTests(unittest.TestCase):
                     'dirs': [os.path.join(theme_dir, 'readthedocs'), mkdocs_templates_dir],
                     'static_templates': ['404.html', 'sitemap.xml'],
                     'vars': {
+                        'locale': parse_locale('en'),
                         'include_search_page': True,
                         'search_index_only': False,
+                        'analytics': {'anonymize_ip': False, 'gtag': None},
                         'highlightjs': True,
                         'hljs_languages': [],
                         'include_homepage_in_sidebar': True,
                         'prev_next_buttons_location': 'bottom',
                         'navigation_depth': 4,
                         'sticky_navigation': True,
+                        'logo': None,
                         'titles_only': False,
                         'collapse_navigation': True
                     }
                 }, {
                     'dirs': [mytheme, mkdocs_templates_dir],
                     'static_templates': ['sitemap.xml'],
-                    'vars': {}
+                    'vars': {'locale': parse_locale('en')}
                 }, {
                     'dirs': [custom, os.path.join(theme_dir, 'readthedocs'), mkdocs_templates_dir],
                     'static_templates': ['404.html', 'sitemap.xml'],
                     'vars': {
+                        'locale': parse_locale('en'),
                         'include_search_page': True,
                         'search_index_only': False,
+                        'analytics': {'anonymize_ip': False, 'gtag': None},
                         'highlightjs': True,
                         'hljs_languages': [],
                         'include_homepage_in_sidebar': True,
                         'prev_next_buttons_location': 'bottom',
                         'navigation_depth': 4,
                         'sticky_navigation': True,
+                        'logo': None,
                         'titles_only': False,
                         'collapse_navigation': True
                     }
@@ -187,13 +184,17 @@ class ConfigTests(unittest.TestCase):
                     'dirs': [os.path.join(theme_dir, 'mkdocs'), mkdocs_templates_dir],
                     'static_templates': ['404.html', 'sitemap.xml', 'foo.html'],
                     'vars': {
+                        'locale': parse_locale('fr'),
                         'show_sidebar': False,
                         'some_var': 'bar',
                         'include_search_page': False,
                         'search_index_only': False,
+                        'analytics': {'gtag': None},
                         'highlightjs': True,
                         'hljs_style': 'github',
                         'hljs_languages': [],
+                        'navigation_depth': 2,
+                        'nav_style': 'primary',
                         'shortcuts': {'help': 191, 'next': 78, 'previous': 80, 'search': 83}
                     }
                 }
@@ -207,10 +208,10 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(len(errors), 0)
                 self.assertEqual(c['theme'].dirs, result['dirs'])
                 self.assertEqual(c['theme'].static_templates, set(result['static_templates']))
-                self.assertEqual(dict([(k, c['theme'][k]) for k in iter(c['theme'])]), result['vars'])
+                self.assertEqual({k: c['theme'][k] for k in iter(c['theme'])}, result['vars'])
 
     def test_empty_nav(self):
-        conf = config.Config(schema=config.DEFAULT_SCHEMA)
+        conf = config.Config(schema=defaults.get_schema())
         conf.load_dict({
             'site_name': 'Example',
             'config_file_path': os.path.join(os.path.abspath('.'), 'mkdocs.yml')
@@ -218,28 +219,19 @@ class ConfigTests(unittest.TestCase):
         conf.validate()
         self.assertEqual(conf['nav'], None)
 
-    def test_copy_pages_to_nav(self):
-        # TODO: remove this when pages config setting is fully deprecated.
-        conf = config.Config(schema=config.DEFAULT_SCHEMA)
+    def test_error_on_pages(self):
+        conf = config.Config(schema=defaults.get_schema())
         conf.load_dict({
             'site_name': 'Example',
             'pages': ['index.md', 'about.md'],
-            'config_file_path': os.path.join(os.path.abspath('.'), 'mkdocs.yml')
         })
-        conf.validate()
-        self.assertEqual(conf['nav'], ['index.md', 'about.md'])
-
-    def test_dont_overwrite_nav_with_pages(self):
-        # TODO: remove this when pages config setting is fully deprecated.
-        conf = config.Config(schema=config.DEFAULT_SCHEMA)
-        conf.load_dict({
-            'site_name': 'Example',
-            'pages': ['index.md', 'about.md'],
-            'nav': ['foo.md', 'bar.md'],
-            'config_file_path': os.path.join(os.path.abspath('.'), 'mkdocs.yml')
-        })
-        conf.validate()
-        self.assertEqual(conf['nav'], ['foo.md', 'bar.md'])
+        errors, warnings = conf.validate()
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(
+            str(errors[0][1]),
+            "The configuration option 'pages' was removed from MkDocs. Use 'nav' instead."
+        )
 
     def test_doc_dir_in_site_dir(self):
 
@@ -267,7 +259,7 @@ class ConfigTests(unittest.TestCase):
             c = config.Config(schema=(
                 ('docs_dir', config_options.Dir(default='docs')),
                 ('site_dir', config_options.SiteDir(default='site')),
-                ('config_file_path', config_options.Type(utils.string_types))
+                ('config_file_path', config_options.Type(str))
             ))
             c.load_dict(patch)
 
@@ -275,3 +267,19 @@ class ConfigTests(unittest.TestCase):
 
             self.assertEqual(len(errors), 1)
             self.assertEqual(warnings, [])
+
+    def testConfigInstancesUnique(self):
+        conf = mkdocs.config.Config(mkdocs.config.defaults.get_schema())
+        conf.load_dict({'site_name': 'foo'})
+        conf.validate()
+        self.assertIsNone(conf['mdx_configs'].get('toc'))
+
+        conf = mkdocs.config.Config(mkdocs.config.defaults.get_schema())
+        conf.load_dict({'site_name': 'foo', 'markdown_extensions': [{"toc": {"permalink": "aaa"}}]})
+        conf.validate()
+        self.assertEqual(conf['mdx_configs'].get('toc'), {'permalink': 'aaa'})
+
+        conf = mkdocs.config.Config(mkdocs.config.defaults.get_schema())
+        conf.load_dict({'site_name': 'foo'})
+        conf.validate()
+        self.assertIsNone(conf['mdx_configs'].get('toc'))
